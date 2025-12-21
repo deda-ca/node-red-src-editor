@@ -46,19 +46,12 @@ export function sanitizeName(name: string, folderName: string, existingFileNames
     return name;
 }
 
-export async function flow2src(flows: Flows, manifest: Manifest = {}, options: { sourcePath?: string; applyManifest?: boolean }): Promise<Manifest> {
-    // Add missing default options
-    options = { ...options, ...{ sourcePath: '', applyManifest: false } };
-    // If no source path is specified then throw an error.
-    if (options.applyManifest && !options.sourcePath) throw new Error('No source path specified.');
-
+export async function flow2Manifest(flows: Flows): Promise<Manifest> {
+    // Create the manifest
+    const manifest: Manifest = { folders: {}, files: {} };
     // A list of all manifest file names. This is the sub path which includes folder name. Used to ensure file names are unique.
     const filesMap: Map<string, number> = new Map();
-    // A list of all folders
-    const folders: Map<string, ManifestFolder> = new Map();
-
     // Add the default folder to the files map and the folders list.
-    folders.set('default', { id: 'default', type: 'folder', name: 'default', folderName: 'default' });
     filesMap.set('default', 1);
 
     // Find all folders first. The folder structure is base on Tabs and Subflows.
@@ -71,15 +64,11 @@ export async function flow2src(flows: Flows, manifest: Manifest = {}, options: {
         if (!name) continue;
 
         // Get the item properties.
-        const manifestItem = { id: flowItem.id, type: flowItem.type, name, folderName: sanitizeName(name, '', filesMap) };
-        // Add the folder to the list of folder.
-        folders.set(manifestItem.id, manifestItem);
+        const folderName = sanitizeName(name, '', filesMap);
+        const manifestFolder = { id: flowItem.id, type: flowItem.type, name, folderName };
 
-        // If the folder does not exist then create it.
-        if (options.applyManifest) {
-            const filePath = path.join(options.sourcePath!, manifestItem.folderName);
-            if (!fs.existsSync(filePath)) fs.mkdirSync(filePath, { recursive: true });
-        }
+        // Add the folder to the list of folder.
+        manifest.folders[manifestFolder.id] = manifestFolder;
     }
 
     // Extract Functions and UI Templates (Vue components)
@@ -88,11 +77,10 @@ export async function flow2src(flows: Flows, manifest: Manifest = {}, options: {
         if (!supportedFlowFileTypes.includes(flowItem.type)) continue;
 
         // Find the folder
-        const folder = flowItem.z && folders.get(flowItem.z);
-        const folderName = (folder && folder.folderName) || 'default';
+        const folder = (flowItem.z && manifest.folders[flowItem.z]) || undefined;
+        const folderName = folder?.folderName || 'default';
         // Get the item properties and process them.
-        const name = flowItem.name;
-        const baseFileName = sanitizeName(name, folderName, filesMap);
+        const baseFileName = sanitizeName(flowItem.name, folderName, filesMap);
         const files: ManifestFile[] = [];
 
         // Add the files to the manifest
@@ -102,70 +90,91 @@ export async function flow2src(flows: Flows, manifest: Manifest = {}, options: {
                 files.push({ type: fileProperty.type, name: `${baseFileName}${fileProperty.extension}`, content });
             }
         }
-        // If there are no files then skip it.
-        if (!files.length) continue;
 
-        // Get the existing manifest item.
-        const manifestItem = { id: flowItem.id, type: flowItem.type, name, folderName, baseFileName, files };
-        const existingManifestItem = manifest[flowItem.id];
-        // Update the manifest item.
-        manifest[flowItem.id] = manifestItem;
-
-        // If we need to apply the manifest then check for changes and apply them.
-        if (options.applyManifest) {
-            // Traverse the files and process each one.
-            for (const file of files) {
-                // Find the existing file in the old manifest.
-                const existingFile = existingManifestItem && existingManifestItem.files.find((f) => f.type === file.type);
-                // If there is no existing file or the content has changed then create it.
-                const filePath = path.join(options.sourcePath!, folderName, file.name);
-                if (!existingFile || existingFile.content !== file.content || !fs.existsSync(filePath)) {
-                    fs.writeFileSync(filePath, file.content, 'utf8');
-                }
-            }
-        }
+        // Add the item to the manifest list only if there are files.
+        if (files.length) manifest.files[flowItem.id] = { id: flowItem.id, type: flowItem.type, name: flowItem.name, folderName, baseFileName, files };
     }
 
-    // TODO: If there are changes then save the manifest file.
-
-    // Save the manifest file
-    const manifestFile = path.join(options.sourcePath!, 'manifest.json');
-    fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2), 'utf8');
-
-    // Remove any files that are not in the manifest
-    let sourceFiles = [];
-
-    try {
-        sourceFiles = getAllFiles(config.sourcePath, ['.vue', '.js', '.md']);
-    } catch (error) {
-        console.error(`ERROR-E01: could not find any files ro read in ${config.sourcePath}`);
-        process.exit(1);
-    }
-
-    sourceFiles.forEach((file) => {
-        let found = false;
-
-        Object.keys(manifest).forEach((id) => {
-            const item = manifest[id];
-
-            if (file.indexOf(item.folderName) > -1 && file.indexOf(item.baseFileName) > -1) {
-                found = true;
-            }
-        });
-
-        if (!found) {
-            const filePath = path.join(config.sourcePath!, file);
-            fs.rmSync(filePath);
-            console.info(`INFO: removed unused file: ${file}`);
-        }
-    });
-
-    // Report the number of functions and templates extracted
-    if (count === 0) {
-        console.info('INFO : No Functions or templates found in format fields.');
-    } else {
-        console.info(`INFO: extracted ${count} functions or templates.`);
-    }
-
+    // Return the manifest.
     return manifest;
+}
+
+export function applyManifest(manifest: Manifest, existingManifest: Manifest = { folders: {}, files: {} }, sourcePath: string) {
+    // If the source path is not defined then throw an error. Create the source path if it does not exist.
+    if (!sourcePath) throw new Error('Source path is not defined');
+    if (!fs.existsSync(sourcePath)) fs.mkdirSync(sourcePath, { recursive: true });
+
+    // The list of stats
+    const stats = {
+        foldersCreated: 0,
+        foldersDeleted: 0,
+        filesCreated: 0,
+        filesUpdated: 0,
+        filesDeleted: 0,
+        totalModified: 0
+    };
+    // A list of all created files and folders.
+    const files: Set<string> = new Set();
+
+    // Traverse the folders and make sure they exist.
+    for (let manifestFolder of Object.values(manifest.folders)) {
+        // Build the folder path
+        const folderPath = path.join(sourcePath, manifestFolder.folderName);
+        // If the folder does not exist then create it.
+        if (!fs.existsSync(folderPath)) {
+            fs.mkdirSync(folderPath, { recursive: true });
+            stats.foldersCreated++;
+        }
+        // Add it to the list of created files.
+        files.add(folderPath);
+    }
+
+    // Traverse the files and create them as well if they do not exist or has changed.
+    for (let manifestItem of Object.values(manifest.files)) {
+        const existingManifestItem = existingManifest.files[manifestItem.id];
+        // Build the file path
+        for (let manifestFile of manifestItem.files) {
+            const existingFile = existingManifestItem?.files.find((f) => f.type === manifestFile.type);
+            const filePath = path.join(sourcePath, manifestItem.folderName, manifestFile.name);
+            // If the file does not exist then create it.
+            if (!fs.existsSync(filePath)) {
+                fs.writeFileSync(filePath, manifestFile.content, 'utf8');
+                manifestFile.modifiedTime = fs.statSync(filePath).mtimeMs;
+                stats.filesCreated++;
+            } else if (!existingFile || existingFile.modifiedTime !== fs.statSync(filePath).mtimeMs) {
+                fs.writeFileSync(filePath, manifestFile.content, 'utf8');
+                manifestFile.modifiedTime = fs.statSync(filePath).mtimeMs;
+                stats.filesUpdated++;
+            }
+            // Add it to the list of created files.
+            files.add(filePath);
+        }
+    }
+
+    // Delete any files that should not be in the source path.
+    const folderStack: string[] = [sourcePath];
+    const extensions: string[] = ['vue', 'js', 'md'];
+
+    while (folderStack.length > 0) {
+        const fullPath = folderStack.pop()!;
+        const fileNames = fs.readdirSync(fullPath);
+        for (const file of fileNames) {
+            const filePath = path.join(fullPath, file);
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+                folderStack.push(filePath);
+                // TODO: we are not deleting folders, probably we should.
+            } else if (stat.isFile() && extensions.includes(path.extname(file)) && !files.has(filePath)) {
+                // If the file is not in the list then delete it.
+                fs.unlinkSync(filePath);
+                stats.filesDeleted++;
+            }
+        }
+    }
+
+    // Update the totalModified
+    stats.totalModified = stats.filesCreated + stats.filesUpdated + stats.filesDeleted + stats.foldersCreated + stats.foldersDeleted;
+
+    // Return the status
+    return stats;
 }

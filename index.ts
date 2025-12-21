@@ -2,7 +2,8 @@ import os from 'os';
 import fs from 'fs';
 import path from 'path';
 
-import type { Config, FlowsResponse } from './types.ts';
+import type { Config, FlowsResponse, Manifest } from './types.ts';
+import { flow2Manifest, applyManifest } from './src/flows2src.ts';
 
 /**
  * Loads the configuration from the given file path.
@@ -92,8 +93,30 @@ async function main() {
         fs.mkdirSync(config.sourcePath, { recursive: true });
     }
 
-    //
-    //console.log(JSON.stringify(flowsResponse, null, 2));
+    // Load existing manifest if it exists.
+    const manifestPath = path.join(path.dirname(config.configFilePath), 'manifest.json');
+    let existingManifest: Manifest = { folders: {}, files: {} };
+    if (fs.existsSync(manifestPath)) {
+        console.log('INFO: loading existing manifest');
+        existingManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    }
+
+    // Convert the flows to a manifest.
+    console.log('INFO: converting flows to manifest');
+    const manifest = await flow2Manifest(flowsResponse.flows);
+
+    // Apply the manifest to the source.
+    console.log('INFO: applying manifest to source');
+    const stats = applyManifest(manifest, existingManifest, config.sourcePath);
+
+    // If there was modification then save the manifest.
+    if (stats.totalModified > 0) {
+        // TODO: Add a timeout so we don't save it a lot of times.
+        console.log('INFO: saving manifest');
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    }
+
+    // Watch created files, if modified then apply back to Node-Red after a delay.
 }
 
 main();

@@ -39,6 +39,7 @@ export type ManifestFile = {
     type: 'format' | 'func' | 'initialize' | 'finalize' | 'info';
     name: string; // The baseFileName including extensions based on the type.
     content: string;
+    modifiedTime?: number;
 };
 
 export type ManifestItem = {
@@ -51,5 +52,6 @@ export type ManifestItem = {
 };
 
 export type Manifest = {
-    [id: string]: ManifestItem;
+    folders: { [id: string]: ManifestFolder };
+    files: { [id: string]: ManifestItem };
 };
