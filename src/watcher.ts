@@ -1,12 +1,12 @@
 import os from 'os';
-import fs, { write } from 'fs';
+import fs from 'fs';
 import path from 'path';
 import chokidar from 'chokidar';
 
-import type { Config, Flows, FlowsResponse, Manifest } from './src/types.ts';
-import { manifest2Flows } from './src/src2flows.ts';
-import { flows2Manifest, applyManifest } from './src/flows2src.ts';
-import { listenToFlowsChange } from './src/api.ts';
+import { getFlows, postFlows, listenToFlowsChange } from './api.ts';
+import type { Config, Manifest } from './types.ts';
+import { manifest2Flows, backupFlows } from './src2flows.ts';
+import { flows2Manifest, applyManifest } from './flows2src.ts';
 
 /**
  * Loads the configuration from the given file path.
@@ -49,54 +49,6 @@ async function loadConfig(configFilePath?: string): Promise<Config> {
     return config.config as Config;
 }
 
-/**
- * Gets the flows from Node-Red.
- *
- * @param {import('./types').Config} config - The configuration for the Node-Red instance.
- * @returns {Promise<import('./types').FlowsResponse>} - The flows response from Node-Red which contains the flows and the revision.
- * @throws {Error} - If the fetch request to Node-Red failed or if the response status is not 200.
- */
-async function getFlows(config: Config): Promise<FlowsResponse> {
-    // Build the headers, if there is is a token then add it.
-    const headers: Record<string, string> = { 'Node-Red-Api-Version': 'v2' };
-    if (config.bearerToken) headers.Authorization = `Bearer ${config.bearerToken}`;
-
-    // Build the URL
-    const nodeRedUrl = config.nodeRedUrl.endsWith('/') ? `${config.nodeRedUrl}flows` : `${config.nodeRedUrl}/flows`;
-    // Fetch the flows
-    const response = await fetch(nodeRedUrl, { method: 'GET', headers });
-
-    // Check the response status. Returns {flows: [], rev: ''}
-    if (response.status === 200) return response.json();
-    else throw new Error(`Error fetching flows from node-red: Status ${response.status}, ${response.statusText}, ${await response.text()}`);
-}
-
-async function postFlows(config: Config, flows: Flows, rev: string): Promise<{ rev: string }> {
-    // Build the headers, if there is is a token then add it.
-    const headers: Record<string, string> = { 'Node-Red-Api-Version': 'v2', 'Node-Red-Deployment-Type': 'full', 'Content-Type': 'application/json' };
-    if (config.bearerToken) headers.Authorization = `Bearer ${config.bearerToken}`;
-
-    // Build the URL
-    const nodeRedUrl = config.nodeRedUrl.endsWith('/') ? `${config.nodeRedUrl}flows` : `${config.nodeRedUrl}/flows`;
-    // Fetch the flows
-    const response = await fetch(nodeRedUrl, { method: 'POST', headers, body: JSON.stringify({ flows, rev }) });
-
-    // Check the response status
-    if (response.status === 200) return response.json();
-    else throw new Error(`Error posting flows to node-red: Status ${response.status}, ${response.statusText}, ${await response.text()}`);
-}
-
-function writeFlows(flowsResponse: FlowsResponse, sourcePath: string) {
-    // Only write every x seconds or minutes.
-
-    const flowsPath = path.join(sourcePath, 'flows.json');
-    fs.writeFileSync(flowsPath, JSON.stringify(flowsResponse, null, 2));
-
-    // TODO: backup the current file if it exists.
-
-    // TODO: clean up older backups.
-}
-
 async function main() {
     // Load the config
     console.log('INFO: loading config');
@@ -105,7 +57,7 @@ async function main() {
     if (config.allowSelfSignedCertificates) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     // Get the flows
     console.log('INFO: loading flows from node-red');
-    let flowsResponse = await getFlows(config);
+    let flowsResponse = await getFlows(config.nodeRedUrl, config.bearerToken || null);
 
     // If the source path is not given then build it from the config file path.
     const configPath = path.dirname(config.configFilePath);
@@ -118,7 +70,7 @@ async function main() {
         // Otherwise fetch the new flows and update the metadata.
         else {
             console.log(`INFO: flows changed, rev: ${rev}`);
-            flowsResponse = await getFlows(config);
+            flowsResponse = await getFlows(config.nodeRedUrl, config.bearerToken || null);
 
             const newManifest = await flows2Manifest(flowsResponse.flows);
             applyManifest(newManifest, manifest, config.sourcePath!);
@@ -126,7 +78,7 @@ async function main() {
     });
 
     // Write the flows to a file.
-    writeFlows(flowsResponse, configPath);
+    backupFlows(flowsResponse, configPath);
 
     // If cleanOnStart is true then clear the source folder.
     if (config.cleanOnStart === true && fs.existsSync(config.sourcePath)) {
@@ -185,7 +137,7 @@ async function main() {
                 // Send the changes to node-red server.
 
                 try {
-                    const response = await postFlows(config, flowsResponse.flows, flowsResponse.rev);
+                    const response = await postFlows(config.nodeRedUrl, config.bearerToken || null, flowsResponse.flows, flowsResponse.rev);
                     // Update the revision number.
                     flowsResponse.rev = response.rev;
                 } catch (error) {

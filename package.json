@@ -10,6 +10,11 @@
         "test": "jest"
     },
     "devDependencies": {
-        "@types/node": "^25.0.3"
+        "@types/node": "^25.0.3",
+        "@types/ws": "^8.18.1"
+    },
+    "dependencies": {
+        "chokidar": "^5.0.0",
+        "ws": "^8.18.3"
     }
 }

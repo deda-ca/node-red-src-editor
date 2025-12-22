@@ -1,32 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import type { Flows, ManifestFolder, ManifestFile, Manifest } from '../types.ts';
-
-export type FlowFileProperty = {
-    type: 'func' | 'format' | 'initialize' | 'finalize' | 'info';
-    extension: '.js' | '.vue' | '.initialize.js' | '.finalize.js' | '.info.md';
-};
-
-export type FlowFolderProperty = {
-    type: 'tab' | 'subflow';
-    name: 'label' | 'name';
-};
-
-const flowFilesProperties: FlowFileProperty[] = [
-    { type: 'func', extension: '.js' },
-    { type: 'format', extension: '.vue' },
-    { type: 'initialize', extension: '.initialize.js' },
-    { type: 'finalize', extension: '.finalize.js' },
-    { type: 'info', extension: '.info.md' }
-];
-
-const flowFolderProperties: { [key: string]: FlowFolderProperty } = {
-    tab: { type: 'tab', name: 'label' },
-    subflow: { type: 'subflow', name: 'name' }
-};
-
-const supportedFlowFileTypes = ['function', 'ui-template'];
+import type { Flows, ManifestFile, Manifest } from './types.ts';
+import { flowFilesProperties, flowFolderProperties, supportedFlowFileTypes } from './types.ts';
 
 export function sanitizeName(name: string, folderName: string, existingFileNames: Map<string, number>): string {
     // Make sure the name is a valid file name and build the file path.
@@ -46,7 +22,7 @@ export function sanitizeName(name: string, folderName: string, existingFileNames
     return name;
 }
 
-export async function flow2Manifest(flows: Flows): Promise<Manifest> {
+export async function flows2Manifest(flows: Flows): Promise<Manifest> {
     // Create the manifest
     const manifest: Manifest = { folders: {}, files: {} };
     // A list of all manifest file names. This is the sub path which includes folder name. Used to ensure file names are unique.
@@ -114,7 +90,7 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
         totalModified: 0
     };
     // A list of all created files and folders.
-    const files: Set<string> = new Set();
+    const files: Map<string, string> = new Map();
 
     // Traverse the folders and make sure they exist.
     for (let manifestFolder of Object.values(manifest.folders)) {
@@ -126,7 +102,7 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
             stats.foldersCreated++;
         }
         // Add it to the list of created files.
-        files.add(folderPath);
+        // files.add(folderPath);
     }
 
     // Traverse the files and create them as well if they do not exist or has changed.
@@ -147,7 +123,7 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
                 stats.filesUpdated++;
             }
             // Add it to the list of created files.
-            files.add(filePath);
+            files.set(filePath, manifestItem.id);
         }
     }
 
@@ -176,5 +152,5 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
     stats.totalModified = stats.filesCreated + stats.filesUpdated + stats.filesDeleted + stats.foldersCreated + stats.foldersDeleted;
 
     // Return the status
-    return stats;
+    return { stats, files };
 }

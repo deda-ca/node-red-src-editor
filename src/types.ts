@@ -8,12 +8,7 @@ export type Config = {
     configFilePath: string;
 };
 
-export type FlowsResponse = {
-    flows: any[];
-    rev: string;
-};
-
-export type FlowsItem = {
+export type FlowItem = {
     id: string;
     type: 'tab' | 'subflow' | 'function' | 'ui-template';
     label: string;
@@ -26,7 +21,12 @@ export type FlowsItem = {
     info?: string;
 };
 
-export type Flows = FlowsItem[];
+export type Flows = FlowItem[];
+
+export type FlowsResponse = {
+    flows: Flows;
+    rev: string;
+};
 
 export type ManifestFolder = {
     id: string; // The id as found in the flows file
@@ -54,4 +54,32 @@ export type ManifestItem = {
 export type Manifest = {
     folders: { [id: string]: ManifestFolder };
     files: { [id: string]: ManifestItem };
+    rev?: string;
 };
+
+// This can be extended to include other node types if needed. The code not change only need to add the flow/node type, code properties, file extensions, etc.
+
+export type FlowFileProperty = {
+    type: 'func' | 'format' | 'initialize' | 'finalize' | 'info';
+    extension: '.js' | '.vue' | '.initialize.js' | '.finalize.js' | '.info.md';
+};
+
+export type FlowFolderProperty = {
+    type: 'tab' | 'subflow';
+    name: 'label' | 'name';
+};
+
+export const flowFilesProperties: FlowFileProperty[] = [
+    { type: 'func', extension: '.js' },
+    { type: 'format', extension: '.vue' },
+    { type: 'initialize', extension: '.initialize.js' },
+    { type: 'finalize', extension: '.finalize.js' },
+    { type: 'info', extension: '.info.md' }
+];
+
+export const flowFolderProperties: { [key: string]: FlowFolderProperty } = {
+    tab: { type: 'tab', name: 'label' },
+    subflow: { type: 'subflow', name: 'name' }
+};
+
+export const supportedFlowFileTypes = ['function', 'ui-template'];
