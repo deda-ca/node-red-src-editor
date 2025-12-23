@@ -22,13 +22,17 @@ export function sanitizeName(name: string, folderName: string, existingFileNames
     return name;
 }
 
-export async function flows2Manifest(flows: Flows): Promise<Manifest> {
-    // Create the manifest
-    const manifest: Manifest = { folders: {}, files: {} };
-    // A list of all manifest file names. This is the sub path which includes folder name. Used to ensure file names are unique.
-    const filesMap: Map<string, number> = new Map();
+export function flows2Manifest(flows: Flows, revision: string, manifest: Manifest = { folders: {}, files: {}, filesMap: new Map() }): Manifest {
+    // A list of all manifest file sub-paths (folder name/file name). Used to ensure file names are unique.
+    const filePaths: Map<string, number> = new Map();
     // Add the default folder to the files map and the folders list.
-    filesMap.set('default', 1);
+    filePaths.set('default', 1);
+
+    // Make a local copy of the existing files if any and clear the manifest for rebuilding.
+    const existingFiles = manifest.files;
+    manifest.folders = {};
+    manifest.files = {};
+    manifest.rev = revision;
 
     // Find all folders first. The folder structure is base on Tabs and Subflows.
     for (const flowItem of flows) {
@@ -40,9 +44,8 @@ export async function flows2Manifest(flows: Flows): Promise<Manifest> {
         if (!name) continue;
 
         // Get the item properties.
-        const folderName = sanitizeName(name, '', filesMap);
+        const folderName = sanitizeName(name, '', filePaths);
         const manifestFolder = { id: flowItem.id, type: flowItem.type, name, folderName };
-
         // Add the folder to the list of folder.
         manifest.folders[manifestFolder.id] = manifestFolder;
     }
@@ -56,14 +59,21 @@ export async function flows2Manifest(flows: Flows): Promise<Manifest> {
         const folder = (flowItem.z && manifest.folders[flowItem.z]) || undefined;
         const folderName = folder?.folderName || 'default';
         // Get the item properties and process them.
-        const baseFileName = sanitizeName(flowItem.name, folderName, filesMap);
+        const baseFileName = sanitizeName(flowItem.name, folderName, filePaths);
         const files: ManifestFile[] = [];
+
+        // Find the existing file.
+        const existingManifestItem = existingFiles[flowItem.id];
 
         // Add the files to the manifest
         for (const fileProperty of flowFilesProperties) {
             const content = flowItem[fileProperty.type];
             if (content && typeof content === 'string' && content.trim().length) {
-                files.push({ type: fileProperty.type, name: `${baseFileName}${fileProperty.extension}`, content });
+                // Get the existing manifest file if any.
+                const existingManifestFile = existingManifestItem?.files.find((file) => file.type === fileProperty.type);
+                const modifiedTime = existingManifestFile && existingManifestFile.content === content ? existingManifestFile.modifiedTime : undefined;
+                // Add the file to the manifest files list.
+                files.push({ type: fileProperty.type, name: `${baseFileName}${fileProperty.extension}`, content, modifiedTime });
             }
         }
 
@@ -75,7 +85,7 @@ export async function flows2Manifest(flows: Flows): Promise<Manifest> {
     return manifest;
 }
 
-export function applyManifest(manifest: Manifest, existingManifest: Manifest = { folders: {}, files: {} }, sourcePath: string) {
+export function applyManifest(manifest: Manifest, sourcePath: string) {
     // If the source path is not defined then throw an error. Create the source path if it does not exist.
     if (!sourcePath) throw new Error('Source path is not defined');
     if (!fs.existsSync(sourcePath)) fs.mkdirSync(sourcePath, { recursive: true });
@@ -101,23 +111,20 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
             fs.mkdirSync(folderPath, { recursive: true });
             stats.foldersCreated++;
         }
-        // Add it to the list of created files.
-        // files.add(folderPath);
     }
 
     // Traverse the files and create them as well if they do not exist or has changed.
     for (let manifestItem of Object.values(manifest.files)) {
-        const existingManifestItem = existingManifest.files[manifestItem.id];
         // Build the file path
         for (let manifestFile of manifestItem.files) {
-            const existingFile = existingManifestItem?.files.find((f) => f.type === manifestFile.type);
             const filePath = path.join(sourcePath, manifestItem.folderName, manifestFile.name);
             // If the file does not exist then create it.
             if (!fs.existsSync(filePath)) {
                 fs.writeFileSync(filePath, manifestFile.content, 'utf8');
                 manifestFile.modifiedTime = fs.statSync(filePath).mtimeMs;
                 stats.filesCreated++;
-            } else if (!existingFile || existingFile.modifiedTime !== fs.statSync(filePath).mtimeMs) {
+            } else if (manifestFile.modifiedTime !== fs.statSync(filePath).mtimeMs) {
+                // If the file has changed then update it.
                 fs.writeFileSync(filePath, manifestFile.content, 'utf8');
                 manifestFile.modifiedTime = fs.statSync(filePath).mtimeMs;
                 stats.filesUpdated++;
@@ -130,7 +137,7 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
     // Delete any files that should not be in the source path.
     const folderStack: string[] = [sourcePath];
     const extensions: string[] = ['vue', 'js', 'md'];
-
+    // Traverse the folder stack none-recursively.
     while (folderStack.length > 0) {
         const fullPath = folderStack.pop()!;
         const fileNames = fs.readdirSync(fullPath);
@@ -150,7 +157,8 @@ export function applyManifest(manifest: Manifest, existingManifest: Manifest = {
 
     // Update the totalModified
     stats.totalModified = stats.filesCreated + stats.filesUpdated + stats.filesDeleted + stats.foldersCreated + stats.foldersDeleted;
+    manifest.filesMap = files;
 
     // Return the status
-    return { stats, files };
+    return stats;
 }
