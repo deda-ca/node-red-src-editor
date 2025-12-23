@@ -95,7 +95,12 @@ export async function start() {
 
     // Load the config
     console.log('INFO: Loading config...');
-    const config = await loadConfig(undefined, app);
+    try {
+        app.config = await loadConfig(undefined, app);
+    } catch (error: any | Error) {
+        return console.error('ERROR: ' + error.toString());
+    }
+    const config = app.config;
     console.log(`INFO: Config loaded: ${app.configFilePath}`);
 
     // If allow allowSelfSignedCertificates then disable the certificate check.

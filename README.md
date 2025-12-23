@@ -72,6 +72,22 @@ Run tests with:
 npm test
 ```
 
+## Compiling and Installing
+
+If using Bun compile source code to a single executable file:
+
+```bash
+bun build src/watcher.ts \
+  --compile \
+  --outfile dist/node-red-flow-src-sync
+```
+
+Make executable available in PATH:
+
+```bash
+sudo cp dist/node-red-flow-src-sync /usr/local/bin/
+```
+
 ## License
 
 MIT License
