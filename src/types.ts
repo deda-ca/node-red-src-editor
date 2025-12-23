@@ -1,11 +1,12 @@
 export type Config = {
     nodeRedUrl: string;
+    bearerToken?: string;
     allowSelfSignedCertificates?: boolean;
-    bearerToken?: string | null;
-    sourcePath?: string | null;
+
+    sourcePath: string;
     cleanOnStart?: boolean;
 
-    configFilePath: string;
+    fileChangeDelay?: number;
 };
 
 export type FlowItem = {
@@ -54,6 +55,7 @@ export type ManifestItem = {
 export type Manifest = {
     folders: { [id: string]: ManifestFolder };
     files: { [id: string]: ManifestItem };
+    filesMap: Map<string, string>;
     rev?: string;
 };
 
@@ -83,3 +85,13 @@ export const flowFolderProperties: { [key: string]: FlowFolderProperty } = {
 };
 
 export const supportedFlowFileTypes = ['function', 'ui-template'];
+
+export type App = {
+    config: Config;
+    configBasePath: string;
+    configFilePath: string;
+
+    flows: Flows | null;
+    revision: string | null;
+    manifest: Manifest | null;
+};

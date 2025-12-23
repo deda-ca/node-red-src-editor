@@ -20,16 +20,13 @@ export function generateFilePathToIdMap(manifest: Manifest, sourcePath: string):
     return files;
 }
 
-export function manifest2Flows(flows: Flows, manifest: Manifest, sourcePath: string, changedFiles: string[], files?: Map<string, string>) {
-    // If the files map is not defined then generate it.
-    if (!files) files = generateFilePathToIdMap(manifest, sourcePath);
-
+export function manifest2Flows(flows: Flows, manifest: Manifest, sourcePath: string, changedFiles: string[]) {
     let changed = 0;
 
     // Traverse the changed files and apply them within the flows
     for (let filePath of changedFiles) {
-        // Get the id
-        const id = files.get(filePath);
+        // Get the id from the file path-id map
+        const id = manifest.filesMap.get(filePath);
         if (!id) continue;
 
         // Get the manifest item
@@ -49,6 +46,9 @@ export function manifest2Flows(flows: Flows, manifest: Manifest, sourcePath: str
         const content = fs.readFileSync(filePath, 'utf-8');
         const modifiedDate = fs.statSync(filePath).mtimeMs;
 
+        // If the file has not changed then skip it.
+        if (manifestFile.content === content) continue;
+
         // Update the flow item and the manifest file
         manifestFile.content = content;
         manifestFile.modifiedTime = modifiedDate;
@@ -61,13 +61,6 @@ export function manifest2Flows(flows: Flows, manifest: Manifest, sourcePath: str
     return changed;
 }
 
-export function backupFlows(flowsResponse: FlowsResponse, sourcePath: string) {
-    // Only write every x seconds or minutes.
-
-    const flowsPath = path.join(sourcePath, 'flows.json');
-    fs.writeFileSync(flowsPath, JSON.stringify(flowsResponse, null, 2));
-
-    // TODO: backup the current file if it exists.
-
-    // TODO: clean up older backups.
+export function backupFlows(flows: Flows, sourcePath: string) {
+    // TODO: possible future enhancement: implement rotation and max backup count.
 }
